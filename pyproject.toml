@@ -1,6 +1,6 @@
 [project]
-name = "fastllm"
-version = "0.0.1"
+name = "batchllm"
+version = "0.1.0"
 authors = [
   { name="chaofeng.gcf", email="chaofeng.gcf@alibaba-inc.com" },
 ]
@@ -14,5 +14,5 @@ classifiers = [
 ]
 
 [project.urls]
-Homepage = "https://code.alibaba-inc.com/com-model/FastLLM"
-Issues = "https://code.alibaba-inc.com/com-model/FastLLM/issues"
+Homepage = "https://github.com/Lyaction/BatchLLM"
+Issues = "https://github.com/Lyaction/BatchLLM/issues"

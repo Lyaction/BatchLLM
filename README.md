@@ -1,2 +1,2 @@
-# FastLLM
-A tool designed for llm offline distributed inference from Odps datasource.
+# BatchLLM
+A framework designed for llm offline distributed inference.
