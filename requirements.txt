@@ -1,0 +1,12 @@
+# Dependencies for NVIDIA GPUs
+json
+pandas
+numpy
+modelscope
+absl-py >= 2.1.0
+vllm >=0.4.2
+ray >= 2.9
+transformers >= 4.40.0
+torch == 2.3.0
+xformers == 0.0.26.post1  # Requires PyTorch 2.3.0
+flash-attn >= 2.5.8
