@@ -14,38 +14,38 @@ from modelscope import snapshot_download
 FLAGS = flags.FLAGS
 
 # template
-#flags.DEFINE_integer('age', None, 'Your age in years.', lower_bound=0) 
+#flags.DEFINE_integer('age', None, 'Your age in years.', lower_bound=0)
 #flags.DEFINE_float("weight", None, "Your weight in kg.", lower_bound=0)
 #flags.DEFINE_boolean('debug', False, 'Produces debugging output.')
 #flags.DEFINE_enum('job', 'running', ['running', 'stopped'], 'Job status.') #DEFINE_enum()函数()中各元素分别代表name,default,enum_values,help
 #flags.DEFINE_list("food", None, "Your favorite food")
 
 # user config
-flags.DEFINE_string('infer_kernel', 'SingleInfer', 'user define class for infer.') 
-flags.DEFINE_integer('batch_size', 1024, 'batch size.') 
-flags.DEFINE_integer('max_queue_len', 102400, 'max queue len.') 
+flags.DEFINE_string('infer_kernel', 'SingleInfer', 'user define class for infer.')
+flags.DEFINE_integer('batch_size', 1024, 'batch size.')
+flags.DEFINE_integer('max_queue_len', 102400, 'max queue len.')
 
 # odps config
-flags.DEFINE_string('access_id', '', 'odps access id.') 
-flags.DEFINE_string('access_key', '', 'odps access key.') 
-flags.DEFINE_string('project', 'bi_strategy', 'odps project.') 
-flags.DEFINE_string('endpoint', 'http://service-corp.odps.aliyun-inc.com/api', 'odps endpoint.') 
+flags.DEFINE_string('access_id', '', 'odps access id.')
+flags.DEFINE_string('access_key', '', 'odps access key.')
+flags.DEFINE_string('project', 'bi_strategy', 'odps project.')
+flags.DEFINE_string('endpoint', 'http://service-corp.odps.aliyun-inc.com/api', 'odps endpoint.')
 
 # table config
-flags.DEFINE_string('input_table', '', 'Input table name.') 
-flags.DEFINE_string('input_partition', '', 'Input table partition name.') 
-flags.DEFINE_string('column', 'prompts', 'Input table column.') 
-flags.DEFINE_string('output_table', '', 'Output table name.') 
-flags.DEFINE_string('output_partition', '', 'Output table partition name.') 
+flags.DEFINE_string('input_table', '', 'Input table name.')
+flags.DEFINE_string('input_partition', '', 'Input table partition name.')
+flags.DEFINE_string('column', 'prompts', 'Input table column.')
+flags.DEFINE_string('output_table', '', 'Output table name.')
+flags.DEFINE_string('output_partition', '', 'Output table partition name.')
 
 # LLM init config
-flags.DEFINE_string('model_name', '', 'model name.') 
-flags.DEFINE_boolean('enable_prefix_caching', False, 'enable prefix caching.') 
-flags.DEFINE_float('gpu_memory_utilization', 0.9, 'cache kv.') 
-flags.DEFINE_integer('max_model_len', 20000, 'max tokens.') 
+flags.DEFINE_string('model_name', '', 'model name.')
+flags.DEFINE_boolean('enable_prefix_caching', False, 'enable prefix caching.')
+flags.DEFINE_float('gpu_memory_utilization', 0.9, 'cache kv.')
+flags.DEFINE_integer('max_model_len', 20000, 'max tokens.')
 
 # sampling config
-flags.DEFINE_integer('max_tokens', 500, 'max tokens.') 
+flags.DEFINE_integer('max_tokens', 500, 'max tokens.')
 flags.DEFINE_integer("top_k", -1, "the numbers of top tokens")
 flags.DEFINE_float("top_p", 1.0, "control the cumulative prob.", lower_bound=0)
 
@@ -66,7 +66,7 @@ def check_config():
 
 # default kernel
 class SingleInfer:
- 
+
     def compute(self, ctx):
         return ctx.llm(ctx.batch)
 
@@ -78,7 +78,7 @@ class InferFactory:
     factory_registry = {
         'SingleInfer' : SingleInfer
     }
-    
+
     @classmethod
     def register(cls, infer_class):
         cls.factory_registry[infer_class.__name__] = infer_class
@@ -125,7 +125,7 @@ class OdpsHandle:
         else:
             partition_spec = output_partition + "_" + str(self.index)
         self.table = odps.get_table(output_table)
-        self.table.create_partition(partition_spec, if_not_exists=True) 
+        self.table.create_partition(partition_spec, if_not_exists=True)
         upload_session = TableTunnel(odps).create_stream_upload_session(output_table, partition_spec=partition_spec)
         self.writer = upload_session.open_record_writer()
 
@@ -134,7 +134,7 @@ class OdpsHandle:
         self.fetch_thread = threading.Thread(target=self._fetch_data)
         self.fetch_thread.daemon = True
         self.fetch_thread.start()
-        
+
         logging.info(f"Odps init info: {locals()}")
 
     def __enter__(self):
@@ -178,7 +178,7 @@ class OdpsHandle:
         return batch
 
     def write(self, batch_ins, batch_outs):
-        for q, a in zip(batch_ins, batch_outs["generated_text"]):
+        for q, a in zip(batch_ins, batch_outs):
             record = self.table.new_record()
             record['prompts'] = q
             record['generated_text'] = a
@@ -225,14 +225,14 @@ class Executor:
     def __init__(self):
 
         check_config()
-        
+
         model_dir = os.path.join('/modelset/model/', FLAGS.model_name.split('/')[-1].replace('.', '___'))
         print(model_dir)
         if not os.path.exists(model_dir):
             model_dir = snapshot_download(FLAGS.model_name)
 
         logging.info(f"Model path: {model_dir}")
-    
+
         self.llm_predictor = LLMPredictor(model_dir,
                                           FLAGS.enable_prefix_caching,
                                           FLAGS.gpu_memory_utilization,
@@ -246,7 +246,7 @@ class Executor:
         logging.info(f"Executor kernel: {FLAGS.infer_kernel}")
 
     def run(self):
-        
+
         if hasattr(self.kernel, 'warm_up'):
             logging.info(f"Warm Up: {json.dumps(self.kernel.warm_up(self.llm_predictor), indent=4, ensure_ascii=False)}")
 
@@ -270,6 +270,6 @@ def infer_main(argv):
     Executor().run()
 
 
-if __name__ == '__main__':  
+if __name__ == '__main__':
     logging.get_absl_handler().setLevel(logging.INFO)
     app.run(infer_main)

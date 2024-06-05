@@ -1,6 +1,5 @@
-from fast_infer import InferFactory, Executor
+from batchllm.executor import InferFactory, Executor
 from absl import app
-#import fast_infer as fi
 
 
 template = '''<|im_start|>system
@@ -81,10 +80,10 @@ You are a helpful assistant.
 
 
 class UserInterestInfer:
-    
+
     def __init__(self):
         self.template = template
- 
+
     def compute(self, ctx):
         batch = [self.template.replace("[prompts]", i) for i in ctx.batch]
         return ctx.llm(batch)
@@ -98,5 +97,5 @@ def main(argv):
     Executor().run()
 
 
-if __name__ == '__main__':  
+if __name__ == '__main__':
     app.run(main)
