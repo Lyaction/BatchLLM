@@ -113,6 +113,8 @@ class OdpsHandle:
 
         download_session = TableTunnel(odps).create_download_session(input_table, partition_spec=input_partition)
         data_size = download_session.count//self.worker_num
+        if data_size == 0:
+            logging.error(f"Data size lower than woker num.")
         if self.index == self.worker_num-1:
             count = download_session.count - (self.worker_num-1)*data_size
         else:
@@ -148,12 +150,12 @@ class OdpsHandle:
     def _fetch_data(self):
         while True:
             try:
-                data = str(self.reader.read()[self.column])
+                data = self.reader.read()
                 if not data:
                     self.data_fetched = True
                     logging.info(f"Fetch thread read done.")
                     break
-                self.buffer.put(data, block=True)  # 如果队列满了就会阻塞
+                self.buffer.put(str(data[self.column]), block=True)  # 如果队列满了就会阻塞
             except Exception as e:
                 logging.info(f"Error fetching data: {e}")
                 self.data_fetched = True
@@ -227,9 +229,8 @@ class Executor:
         check_config()
 
         model_dir = os.path.join('/modelset/model/', FLAGS.model_name.split('/')[-1].replace('.', '___'))
-        print(model_dir)
         if not os.path.exists(model_dir):
-            model_dir = snapshot_download(FLAGS.model_name)
+            model_dir = snapshot_download(FLAGS.model_name, cache_dir='/work')
 
         logging.info(f"Model path: {model_dir}")
 
