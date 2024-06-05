@@ -1,6 +1,8 @@
 #!/usr/bin/python
 import os
 import json
+import threading
+from queue import Queue, Empty
 from absl import app
 from absl import flags
 from absl import logging
@@ -20,6 +22,8 @@ FLAGS = flags.FLAGS
 
 # user config
 flags.DEFINE_string('infer_kernel', 'SingleInfer', 'user define class for infer.') 
+flags.DEFINE_integer('batch_size', 1024, 'batch size.') 
+flags.DEFINE_integer('max_queue_len', 102400, 'max queue len.') 
 
 # odps config
 flags.DEFINE_string('access_id', '', 'odps access id.') 
@@ -37,6 +41,8 @@ flags.DEFINE_string('output_partition', '', 'Output table partition name.')
 # LLM init config
 flags.DEFINE_string('model_name', '', 'model name.') 
 flags.DEFINE_boolean('enable_prefix_caching', False, 'enable prefix caching.') 
+flags.DEFINE_float('gpu_memory_utilization', 0.9, 'cache kv.') 
+flags.DEFINE_integer('max_model_len', 20000, 'max tokens.') 
 
 # sampling config
 flags.DEFINE_integer('max_tokens', 500, 'max tokens.') 
@@ -91,7 +97,13 @@ class InferContext:
 
 class OdpsHandle:
 
-    def __init__(self, access_id, access_key, project, endpoint, input_table, input_partition, column, output_table, output_partition):
+    def __init__(self, access_id, access_key, project, endpoint,
+                 input_table, input_partition, column,
+                 output_table, output_partition,
+                 batch_size=512, max_queue_len=1000):
+
+        self.batch_size = batch_size
+        self.max_queue_len = max_queue_len
 
         self.column = column
         odps = ODPS(access_id, access_key, project, endpoint=endpoint)
@@ -106,7 +118,7 @@ class OdpsHandle:
         else:
             count = data_size
         start = self.index*data_size
-        self.reader = download_session.open_arrow_reader(start, count, columns=[column])
+        self.reader = download_session.open_record_reader(start, count, columns=[column])
 
         if self.worker_num == 1:
             partition_spec = output_partition
@@ -116,6 +128,12 @@ class OdpsHandle:
         self.table.create_partition(partition_spec, if_not_exists=True) 
         upload_session = TableTunnel(odps).create_stream_upload_session(output_table, partition_spec=partition_spec)
         self.writer = upload_session.open_record_writer()
+
+        self.buffer = Queue(maxsize=self.max_queue_len)
+        self.data_fetched = False
+        self.fetch_thread = threading.Thread(target=self._fetch_data)
+        self.fetch_thread.daemon = True
+        self.fetch_thread.start()
         
         logging.info(f"Odps init info: {locals()}")
 
@@ -125,12 +143,42 @@ class OdpsHandle:
     def __exit__(self, type, value, trace):
         self.reader.close()
         self.writer.close()
+        logging.info(f"Odps write done.")
+
+    def _fetch_data(self):
+        while True:
+            try:
+                data = str(self.reader.read()[self.column])
+                if not data:
+                    self.data_fetched = True
+                    logging.info(f"Fetch thread read done.")
+                    break
+                self.buffer.put(data, block=True)  # 如果队列满了就会阻塞
+            except Exception as e:
+                logging.info(f"Error fetching data: {e}")
+                self.data_fetched = True
+                break
 
     def batch(self):
-        return self.reader.read()[self.column].to_pylist()
+        batch = []
+        while len(batch) < self.batch_size:
+            if self.data_fetched and self.buffer.empty():
+                logging.info(f"Queue data completed.")
+                break  # 如果数据获取完毕且缓冲区已空，则退出循环
+            try:
+                item = self.buffer.get(timeout=1.0)  # 使用超时来避免无限期阻塞
+                batch.append(item)
+                self.buffer.task_done()
+            except Empty:
+                # 在等待期间没有数据到达
+                if self.data_fetched:
+                    logging.info(f"Queue data completed.")
+                    break
+                continue  # 如果数据尚未获取完，则继续等待其他数据
+        return batch
 
-    def write(self, batch_results):
-        for q, a in zip(batch_results["prompts"], batch_results["generated_text"]):
+    def write(self, batch_ins, batch_outs):
+        for q, a in zip(batch_ins, batch_outs["generated_text"]):
             record = self.table.new_record()
             record['prompts'] = q
             record['generated_text'] = a
@@ -141,12 +189,16 @@ class LLMPredictor:
 
     def __init__(self, model_path,
                  enable_prefix_caching=False,
+                 gpu_memory_utilization=0.9,
+                 max_model_len=None,
                  max_tokens=None,
                  top_p=None,
                  top_k=None):
         tensor_parallel_size = int(os.environ.get("NPROC_PER_NODE", "1"))
         self.llm = LLM(model=model_path,
                        enable_prefix_caching=enable_prefix_caching,
+                       gpu_memory_utilization=gpu_memory_utilization,
+                       max_model_len=max_model_len,
                        tensor_parallel_size=tensor_parallel_size)
 
         self.sampling_params = SamplingParams(max_tokens=max_tokens,
@@ -173,11 +225,18 @@ class Executor:
     def __init__(self):
 
         check_config()
-    
-        model_dir = snapshot_download(FLAGS.model_name)
+        
+        model_dir = os.path.join('/modelset/model/', FLAGS.model_name.split('/')[-1].replace('.', '___'))
+        print(model_dir)
+        if not os.path.exists(model_dir):
+            model_dir = snapshot_download(FLAGS.model_name)
+
+        logging.info(f"Model path: {model_dir}")
     
         self.llm_predictor = LLMPredictor(model_dir,
                                           FLAGS.enable_prefix_caching,
+                                          FLAGS.gpu_memory_utilization,
+                                          FLAGS.max_model_len,
                                           FLAGS.max_tokens,
                                           FLAGS.top_p,
                                           FLAGS.top_k)
@@ -191,21 +250,17 @@ class Executor:
         if hasattr(self.kernel, 'warm_up'):
             logging.info(f"Warm Up: {json.dumps(self.kernel.warm_up(self.llm_predictor), indent=4, ensure_ascii=False)}")
 
-        with OdpsHandle(FLAGS.access_id,
-                        FLAGS.access_key,
-                        FLAGS.project,
-                        FLAGS.endpoint,
-                        FLAGS.input_table,
-                        FLAGS.input_partition,
-                        FLAGS.column,
-                        FLAGS.output_table,
-                        FLAGS.output_partition) as handle:
+        with OdpsHandle(FLAGS.access_id, FLAGS.access_key,
+                        FLAGS.project, FLAGS.endpoint,
+                        FLAGS.input_table, FLAGS.input_partition, FLAGS.column,
+                        FLAGS.output_table, FLAGS.output_partition,
+                        FLAGS.batch_size, FLAGS.max_queue_len) as handle:
             counter = 0
             while True:
                 batch = handle.batch()
                 if batch==[]: break
                 outputs = self.kernel.compute(InferContext(self.llm_predictor, batch))
-                handle.write(outputs)
+                handle.write(batch, outputs['generated_text'])
                 if counter % 1 == 0:
                     logging.info(f"Process batch: {counter}, size: {len(batch)}")
                 counter += 1
