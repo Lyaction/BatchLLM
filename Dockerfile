@@ -3,24 +3,19 @@
 
 #################### BatchLLM dependency IMAGE ####################
 # image with dependency installed
-FROM nvidia/cuda:12.4.1-base-ubuntu22.04 AS batchllm-base
+FROM nvidia/cuda:12.4.1-runtime-ubuntu22.04 AS batchllm
 WORKDIR /workspace
 
 RUN apt-get update -y \
-    && apt-get install -y python3-pip git
-
-RUN ldconfig /usr/local/cuda-12.4/compat/
+    && apt-get install -y python3-pip git vim wget
 
 RUN --mount=type=cache,target=/root/.cache/pip \
-    pip install -i http://yum.tbsite.net/aliyun-pypi/simple/ --trusted-host=yum.tbsite.net --extra-index-url https://mirrors.aliyun.com/pypi/simple/ pyodps-int
+     pip install -i http://yum.tbsite.net/aliyun-pypi/simple/ --trusted-host=yum.tbsite.net --extra-index-url https://mirrors.aliyun.com/pypi/simple/ pyodps-int
 
 COPY requirements.txt requirements.txt
 RUN --mount=type=cache,target=/root/.cache/pip \
-    pip install -r requirements.txt # -i https://pypi.tuna.tsinghua.edu.cn/simple
+    pip install -r requirements.txt
+
+COPY entrypoint.sh entrypoint.sh
+ENTRYPOINT ["bash", "entrypoint.sh"]
 #################### BatchLLM dependency IMAGE ####################
-
-#################### Install BatchLLM ####################
-FROM batchllm-base AS batchllm
-
-ENTRYPOINT ["pip", "install", "batchllm"]
-#################### Install BatchLLM ####################
