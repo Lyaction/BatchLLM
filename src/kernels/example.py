@@ -85,7 +85,7 @@ class UserInterestInfer:
         self.template = template
 
     def compute(self, ctx):
-        batch = [self.template.replace("[prompts]", i) for i in ctx.batch]
+        batch = [self.template.replace("[prompts]", i) for i in ctx.prompts]
         return ctx.llm(batch)
 
     def warm_up(self, llm):

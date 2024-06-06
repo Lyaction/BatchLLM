@@ -34,7 +34,7 @@ flags.DEFINE_string('endpoint', 'http://service-corp.odps.aliyun-inc.com/api', '
 # table config
 flags.DEFINE_string('input_table', '', 'Input table name.')
 flags.DEFINE_string('input_partition', '', 'Input table partition name.')
-flags.DEFINE_string('column', 'prompts', 'Input table column.')
+flags.DEFINE_string('columns', 'prompts', 'Input table columns.')
 flags.DEFINE_string('output_table', '', 'Output table name.')
 flags.DEFINE_string('output_partition', '', 'Output table partition name.')
 
@@ -90,22 +90,23 @@ class InferFactory:
 
 class InferContext:
 
-    def __init__(self, llm, batch):
+    def __init__(self, llm, prompts, index=None):
         self.llm = llm
-        self.batch = batch
+        self.prompts = prompts
+        self.index = index
 
 
 class OdpsHandle:
 
     def __init__(self, access_id, access_key, project, endpoint,
-                 input_table, input_partition, column,
+                 input_table, input_partition, columns,
                  output_table, output_partition,
                  batch_size=512, max_queue_len=1000):
 
         self.batch_size = batch_size
         self.max_queue_len = max_queue_len
 
-        self.column = column
+        self.columns = columns.split(',')
         odps = ODPS(access_id, access_key, project, endpoint=endpoint)
 
         self.worker_num = int(os.environ.get("WORKER_SIZE", "1"))
@@ -120,7 +121,7 @@ class OdpsHandle:
         else:
             count = data_size
         start = self.index*data_size
-        self.reader = download_session.open_record_reader(start, count, columns=[column])
+        self.reader = download_session.open_record_reader(start, count, columns=self.columns)
 
         if self.worker_num == 1:
             partition_spec = output_partition
@@ -155,13 +156,25 @@ class OdpsHandle:
                     self.data_fetched = True
                     logging.info(f"Fetch thread read done.")
                     break
-                self.buffer.put(str(data[self.column]), block=True)  # 如果队列满了就会阻塞
+                self.buffer.put(data, block=True)  # 如果队列满了就会阻塞
             except Exception as e:
                 logging.info(f"Error fetching data: {e}")
                 self.data_fetched = True
                 break
 
     def batch(self):
+        def process(batch):
+            batch_index, batch_prompts = [], []
+            if self.columns == 1:
+                for item in batch:
+                    batch_prompts.append(item[self.columns[-1]])
+                return {"index": batch_prompts, "prompts": batch_prompts}
+            else:
+                for item in batch:
+                    batch_index.append(item[self.columns[0]])
+                    batch_prompts.append(item[self.columns[-1]])
+                return {"index": batch_index, "prompts": batch_prompts}
+
         batch = []
         while len(batch) < self.batch_size:
             if self.data_fetched and self.buffer.empty():
@@ -177,10 +190,10 @@ class OdpsHandle:
                     logging.info(f"Queue data completed.")
                     break
                 continue  # 如果数据尚未获取完，则继续等待其他数据
-        return batch
+        return process(batch)
 
     def write(self, batch_ins, batch_outs):
-        for q, a in zip(batch_ins, batch_outs):
+        for q, a in zip(batch_ins['index'], batch_outs):
             record = self.table.new_record()
             record['prompts'] = q
             record['generated_text'] = a
@@ -253,17 +266,17 @@ class Executor:
 
         with OdpsHandle(FLAGS.access_id, FLAGS.access_key,
                         FLAGS.project, FLAGS.endpoint,
-                        FLAGS.input_table, FLAGS.input_partition, FLAGS.column,
+                        FLAGS.input_table, FLAGS.input_partition, FLAGS.columns,
                         FLAGS.output_table, FLAGS.output_partition,
                         FLAGS.batch_size, FLAGS.max_queue_len) as handle:
             counter = 0
             while True:
                 batch = handle.batch()
-                if batch==[]: break
-                outputs = self.kernel.compute(InferContext(self.llm_predictor, batch))
+                if batch['prompts']==[]: break
+                outputs = self.kernel.compute(InferContext(self.llm_predictor, batch['prompts']))
                 handle.write(batch, outputs['generated_text'])
                 if counter % 1 == 0:
-                    logging.info(f"Process batch: {counter}, size: {len(batch)}")
+                    logging.info(f"Process batch: {counter}, size: {len(batch['prompts'])}")
                 counter += 1
 
 

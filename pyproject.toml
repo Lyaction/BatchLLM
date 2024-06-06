@@ -1,6 +1,6 @@
 [project]
 name = "batchllm"
-version = "0.1.2"
+version = "0.1.5"
 authors = [
   { name="chaofeng.gcf", email="chaofeng.gcf@alibaba-inc.com" },
 ]
