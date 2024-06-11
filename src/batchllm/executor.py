@@ -37,6 +37,7 @@ flags.DEFINE_string('input_partition', '', 'Input table partition name.')
 flags.DEFINE_string('columns', 'prompts', 'Input table columns.')
 flags.DEFINE_string('output_table', '', 'Output table name.')
 flags.DEFINE_string('output_partition', '', 'Output table partition name.')
+flags.DEFINE_integer('output_table_lifecycle', 14, 'Output table lifecycle.')
 
 # LLM init config
 flags.DEFINE_string('model_name', '', 'model name.')
@@ -100,7 +101,7 @@ class OdpsHandle:
 
     def __init__(self, access_id, access_key, project, endpoint,
                  input_table, input_partition, columns,
-                 output_table, output_partition,
+                 output_table, output_partition, lifecycle=14,
                  batch_size=512, max_queue_len=1000):
 
         self.batch_size = batch_size
@@ -112,6 +113,18 @@ class OdpsHandle:
         self.worker_num = int(os.environ.get("WORKER_SIZE", "1"))
         self.index = int(os.environ.get("RANK", "0"))
 
+        if self.worker_num == 1:
+            partition_spec = output_partition
+        else:
+            partition_spec = output_partition + "_" + str(self.index)
+        try:
+            self.table = odps.create_table(output_table, ('key string, value string', 'dt string'), lifecycle=lifecycle)
+        except Exception as e:
+            logging.fatal(e)
+        self.table.create_partition(partition_spec, if_not_exists=True)
+        upload_session = TableTunnel(odps).create_stream_upload_session(output_table, partition_spec=partition_spec)
+        self.writer = upload_session.open_record_writer()
+
         download_session = TableTunnel(odps).create_download_session(input_table, partition_spec=input_partition)
         data_size = download_session.count//self.worker_num
         if data_size == 0:
@@ -122,15 +135,6 @@ class OdpsHandle:
             count = data_size
         start = self.index*data_size
         self.reader = download_session.open_record_reader(start, count, columns=self.columns)
-
-        if self.worker_num == 1:
-            partition_spec = output_partition
-        else:
-            partition_spec = output_partition + "_" + str(self.index)
-        self.table = odps.get_table(output_table)
-        self.table.create_partition(partition_spec, if_not_exists=True)
-        upload_session = TableTunnel(odps).create_stream_upload_session(output_table, partition_spec=partition_spec)
-        self.writer = upload_session.open_record_writer()
 
         self.buffer = Queue(maxsize=self.max_queue_len)
         self.data_fetched = False
@@ -195,8 +199,8 @@ class OdpsHandle:
     def write(self, batch_ins, batch_outs):
         for q, a in zip(batch_ins['index'], batch_outs):
             record = self.table.new_record()
-            record['prompts'] = q
-            record['generated_text'] = a
+            record['key'] = q
+            record['value'] = a
             self.writer.write(record)
 
 
@@ -267,7 +271,7 @@ class Executor:
         with OdpsHandle(FLAGS.access_id, FLAGS.access_key,
                         FLAGS.project, FLAGS.endpoint,
                         FLAGS.input_table, FLAGS.input_partition, FLAGS.columns,
-                        FLAGS.output_table, FLAGS.output_partition,
+                        FLAGS.output_table, FLAGS.output_partition, FLAGS.output_table_lifecycle,
                         FLAGS.batch_size, FLAGS.max_queue_len) as handle:
             counter = 0
             while True:
