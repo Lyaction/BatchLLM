@@ -118,7 +118,7 @@ class OdpsHandle:
         else:
             partition_spec = output_partition + "_" + str(self.index)
         try:
-            self.table = odps.create_table(output_table, ('key string, value string', 'dt string'), lifecycle=lifecycle)
+            self.table = odps.create_table(output_table, ('key string, value string', 'dt string'), if_not_exists=True, lifecycle=lifecycle)
         except Exception as e:
             logging.fatal(e)
         self.table.create_partition(partition_spec, if_not_exists=True)
