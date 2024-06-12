@@ -110,7 +110,7 @@ class OdpsHandle:
         self.columns = columns.split(',')
         odps = ODPS(access_id, access_key, project, endpoint=endpoint)
 
-        self.worker_num = int(os.environ.get("WORKER_SIZE", "1"))
+        self.worker_num = int(os.environ.get("WORLD_SIZE", "1"))
         self.index = int(os.environ.get("RANK", "0"))
 
         if self.worker_num == 1:
