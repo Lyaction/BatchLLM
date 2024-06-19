@@ -6,7 +6,7 @@ from queue import Queue, Empty
 from absl import app
 from absl import flags
 from absl import logging
-from odps import ODPS
+from odps import ODPS, types
 from odps.tunnel import TableTunnel
 from vllm import LLM, SamplingParams
 from modelscope import snapshot_download
