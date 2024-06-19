@@ -160,10 +160,6 @@ class OdpsHandle:
         while True:
             try:
                 data = self.reader.read()
-                if not data:
-                    self.data_fetched = True
-                    logging.info(f"Fetch thread read done.")
-                    break
                 self.buffer.put((next(self.seq_counter), data), block=True)  # 如果队列满了就会阻塞
             except Exception as e:
                 logging.error(f"Error fetching data: {e}")
