@@ -50,6 +50,7 @@ flags.DEFINE_integer('max_model_len', 20000, 'max tokens.')
 flags.DEFINE_integer('max_tokens', 500, 'max tokens.')
 flags.DEFINE_integer("top_k", -1, "the numbers of top tokens")
 flags.DEFINE_float("top_p", 1.0, "control the cumulative prob.", lower_bound=0)
+flags.DEFINE_float("temperature", 1.0, "Float that controls the randomness of the sampling.")
 
 
 def check_config():
@@ -220,8 +221,9 @@ class LLMPredictor:
                  gpu_memory_utilization=0.9,
                  max_model_len=None,
                  max_tokens=None,
-                 top_p=None,
-                 top_k=None):
+                 top_p=-1,
+                 temperature=1.0,
+                 top_k=-1):
         tensor_parallel_size = int(os.environ.get("NPROC_PER_NODE", "1"))
         self.llm = LLM(model=model_path,
                        enable_prefix_caching=enable_prefix_caching,
@@ -231,7 +233,8 @@ class LLMPredictor:
 
         self.sampling_params = SamplingParams(max_tokens=max_tokens,
                                               top_p=top_p,
-                                              top_k=top_k,)
+                                              temperature=temperature,
+                                              top_k=top_k)
 
         logging.info("LLMPredictor init done!")
 
@@ -266,6 +269,7 @@ class Executor:
                                           FLAGS.max_model_len,
                                           FLAGS.max_tokens,
                                           FLAGS.top_p,
+                                          FLAGS.temperature,
                                           FLAGS.top_k)
 
         self.kernel = InferFactory.get_kernel(FLAGS.infer_kernel)()
