@@ -1,4 +1,4 @@
-from batchllm.executor import InferFactory, Executor
+from batchllm import InferFactory, Executor
 from absl import app
 
 

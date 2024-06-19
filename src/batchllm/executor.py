@@ -10,6 +10,7 @@ from odps import ODPS
 from odps.tunnel import TableTunnel
 from vllm import LLM, SamplingParams
 from modelscope import snapshot_download
+from batchllm.util import Counter
 
 FLAGS = flags.FLAGS
 
@@ -62,6 +63,7 @@ def check_config():
         FLAGS.model_name = 'qwen/Qwen1.5-7B-Chat-AWQ'
     if FLAGS.infer_kernel not in InferFactory.factory_registry:
         logging.error(f'User deinfed kernel {FLAGS.infer_kernel} not be register')
+    FLAGS.max_queue_len = 5 * FLAGS.batch_size
     logging.info(f"flags: {json.dumps(FLAGS.flag_values_dict(), indent=4)}")
 
 
@@ -107,6 +109,8 @@ class OdpsHandle:
         self.batch_size = batch_size
         self.max_queue_len = max_queue_len
 
+        self.seq_counter = Counter()
+
         self.columns = columns.split(',')
         odps = ODPS(access_id, access_key, project, endpoint=endpoint)
 
@@ -150,7 +154,7 @@ class OdpsHandle:
     def __exit__(self, type, value, trace):
         self.reader.close()
         self.writer.close()
-        logging.info(f"Odps write done.")
+        logging.info(f"Odps write done: {next(self.seq_counter)}.")
 
     def _fetch_data(self):
         while True:
@@ -160,24 +164,27 @@ class OdpsHandle:
                     self.data_fetched = True
                     logging.info(f"Fetch thread read done.")
                     break
-                self.buffer.put(data, block=True)  # 如果队列满了就会阻塞
+                self.buffer.put((next(self.seq_counter), data), block=True)  # 如果队列满了就会阻塞
             except Exception as e:
-                logging.info(f"Error fetching data: {e}")
+                logging.error(f"Error fetching data: {e}")
                 self.data_fetched = True
                 break
 
     def batch(self):
         def process(batch):
             batch_index, batch_prompts = [], []
+            batch_id = 0
             if self.columns == 1:
-                for item in batch:
+                for counter, item in batch:
+                    batch_id = counter
                     batch_prompts.append(item[self.columns[-1]])
-                return {"index": batch_prompts, "prompts": batch_prompts}
+                return {"index": batch_prompts, "prompts": batch_prompts, "id": batch_id}
             else:
-                for item in batch:
+                for counter, item in batch:
+                    batch_id = counter
                     batch_index.append(item[self.columns[0]])
                     batch_prompts.append(item[self.columns[-1]])
-                return {"index": batch_index, "prompts": batch_prompts}
+                return {"index": batch_index, "prompts": batch_prompts, "id": batch_id}
 
         batch = []
         while len(batch) < self.batch_size:
@@ -201,7 +208,10 @@ class OdpsHandle:
             record = self.table.new_record()
             record['key'] = q
             record['value'] = a
-            self.writer.write(record)
+            try:
+                self.writer.write(record)
+            except Exception as e:
+                logging.error(f"Write error: {q}")
 
 
 class LLMPredictor:
@@ -280,7 +290,7 @@ class Executor:
                 outputs = self.kernel.compute(InferContext(self.llm_predictor, batch['prompts']))
                 handle.write(batch, outputs['generated_text'])
                 if counter % 1 == 0:
-                    logging.info(f"Process batch: {counter}, size: {len(batch['prompts'])}")
+                    logging.info(f"Process batch: {counter}, id: {batch['id']}, size: {len(batch['prompts'])}")
                 counter += 1
 
 
