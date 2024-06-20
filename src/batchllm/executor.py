@@ -10,7 +10,7 @@ from odps import ODPS, types
 from odps.tunnel import TableTunnel
 from vllm import LLM, SamplingParams
 from modelscope import snapshot_download
-from batchllm.util import Counter
+from batchllm import util
 
 FLAGS = flags.FLAGS
 
@@ -109,11 +109,14 @@ class OdpsHandle:
 
         self.batch_size = batch_size
         self.max_queue_len = max_queue_len
+        self.input_table = input_table
+        self.input_partition = input_partition
 
-        self.seq_counter = Counter()
+        self.seq_counter = util.Counter()
 
         self.columns = columns.split(',')
-        odps = ODPS(access_id, access_key, project, endpoint=endpoint)
+        self.odps = ODPS(access_id, access_key, project, endpoint=endpoint)
+        self.tunnel = TableTunnel(self.odps)
 
         self.worker_num = int(os.environ.get("WORLD_SIZE", "1"))
         self.index = int(os.environ.get("RANK", "0"))
@@ -123,23 +126,14 @@ class OdpsHandle:
         else:
             partition_spec = output_partition + "_" + str(self.index)
         try:
-            self.table = odps.create_table(output_table, ('key string, value string', 'dt string'), if_not_exists=True, lifecycle=lifecycle)
+            self.table = self.odps.create_table(output_table, ('key string, value string', 'dt string'), if_not_exists=True, lifecycle=lifecycle)
         except Exception as e:
             logging.fatal(e)
         self.table.create_partition(partition_spec, if_not_exists=True)
-        upload_session = TableTunnel(odps).create_stream_upload_session(output_table, partition_spec=partition_spec)
+        upload_session = self.tunnel.create_stream_upload_session(output_table, partition_spec=partition_spec)
         self.writer = upload_session.open_record_writer()
 
-        download_session = TableTunnel(odps).create_download_session(input_table, partition_spec=input_partition)
-        data_size = download_session.count//self.worker_num
-        if data_size == 0:
-            logging.error(f"Data size lower than woker num.")
-        if self.index == self.worker_num-1:
-            count = download_session.count - (self.worker_num-1)*data_size
-        else:
-            count = data_size
-        start = self.index*data_size
-        self.reader = download_session.open_record_reader(start, count, columns=self.columns)
+        self.start, self.count = self._create_reader()
 
         self.buffer = Queue(maxsize=self.max_queue_len)
         self.data_fetched = False
@@ -148,6 +142,24 @@ class OdpsHandle:
         self.fetch_thread.start()
 
         logging.info(f"Odps init info: {locals()}")
+
+    def _create_reader(self, mark=0):
+        download_session = util.call_with_retry(self.tunnel.create_download_session,
+                                                table=self.input_table,
+                                                partition_spec=self.input_partition)
+        data_size = download_session.count//self.worker_num
+        if data_size == 0:
+            logging.error(f"Data size lower than woker num.")
+        if self.index == self.worker_num-1:
+            count = download_session.count - (self.worker_num-1)*data_size
+        else:
+            count = data_size
+        start = self.index*data_size
+
+        assert mark >= 0 and mark < count
+        self.reader = download_session.open_record_reader(start + mark, count - mark, columns=self.columns)
+        logging.info(f"Odps reader init: {locals()}")
+        return (start+mark, count-mark)
 
     def __enter__(self):
         return self
@@ -166,9 +178,14 @@ class OdpsHandle:
                 else:
                     logging.warning(f"Error data format: {data}")
             except Exception as e:
-                logging.error(f"(Mybe end) Error fetching data: {e}")
-                self.data_fetched = True
-                break
+                current = self.seq_counter.eval()
+                if current < self.count:
+                    start, count = _create_reader(current)
+                    logging.warning(f"Error: {e}, ReTry to create connect from: {start, count}.")
+                else:
+                    logging.Info(f"Fetching data end. {e}")
+                    self.data_fetched = True
+                    break
 
     def batch(self):
         def process(batch):

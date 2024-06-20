@@ -15,3 +15,22 @@ class Counter:
     def reset(self) -> None:
         with self.lock:
             self.counter = 0
+
+    def eval(self) -> None:
+        with self.lock:
+            return self.counter
+
+
+def call_with_retry(func, *args, **kwargs):
+    retry_num = 0
+    retry_times = kwargs.pop("retry_times", options.retry_times)
+    delay = kwargs.pop("delay", options.retry_delay)
+    exc_type = kwargs.pop("exc_type", BaseException)
+    while True:
+        try:
+            return func(*args, **kwargs)
+        except exc_type:
+            retry_num += 1
+            time.sleep(delay)
+            if retry_num > retry_times:
+                raise
