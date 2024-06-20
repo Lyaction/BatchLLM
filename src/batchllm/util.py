@@ -23,8 +23,8 @@ class Counter:
 
 def call_with_retry(func, *args, **kwargs):
     retry_num = 0
-    retry_times = kwargs.pop("retry_times", options.retry_times)
-    delay = kwargs.pop("delay", options.retry_delay)
+    retry_times = kwargs.pop("retry_times", 5)
+    delay = kwargs.pop("delay", 0.1)
     exc_type = kwargs.pop("exc_type", BaseException)
     while True:
         try:

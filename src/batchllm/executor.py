@@ -180,10 +180,10 @@ class OdpsHandle:
             except Exception as e:
                 current = self.seq_counter.eval()
                 if current < self.count:
-                    start, count = _create_reader(current)
+                    start, count = self._create_reader(current)
                     logging.warning(f"Error: {e}, ReTry to create connect from: {start, count}.")
                 else:
-                    logging.Info(f"Fetching data end. {e}")
+                    logging.info(f"Fetching data end. {e}")
                     self.data_fetched = True
                     break
 
