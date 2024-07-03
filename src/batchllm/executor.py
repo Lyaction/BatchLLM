@@ -42,6 +42,7 @@ flags.DEFINE_integer('output_table_lifecycle', 14, 'Output table lifecycle.')
 
 # LLM init config
 flags.DEFINE_string('model_name', '', 'model name.')
+flags.DEFINE_boolean('embedding_mode', False, 'embedding model.')
 flags.DEFINE_boolean('enable_prefix_caching', False, 'enable prefix caching.')
 flags.DEFINE_float('gpu_memory_utilization', 0.9, 'cache kv.')
 flags.DEFINE_integer('max_model_len', 20000, 'max tokens.')
@@ -234,6 +235,7 @@ class OdpsHandle:
 class LLMPredictor:
 
     def __init__(self, model_path,
+                 embedding_mode=False,
                  enable_prefix_caching=False,
                  gpu_memory_utilization=0.9,
                  max_model_len=None,
@@ -246,16 +248,20 @@ class LLMPredictor:
                        enable_prefix_caching=enable_prefix_caching,
                        gpu_memory_utilization=gpu_memory_utilization,
                        max_model_len=max_model_len,
+                       enforce_eager=True if embedding_mode else False,
                        tensor_parallel_size=tensor_parallel_size)
 
         self.sampling_params = SamplingParams(max_tokens=max_tokens,
                                               top_p=top_p,
                                               temperature=temperature,
                                               top_k=top_k)
-
+        self.call = self.generate if not embedding_mode else self.encode
         logging.info("LLMPredictor init done!")
 
     def __call__(self, batch):
+        return self.call(batch)
+
+    def generate(self, batch):
         outputs = self.llm.generate(batch, self.sampling_params)
         prompt = []
         generated_text = []
@@ -264,8 +270,19 @@ class LLMPredictor:
             generated_text.append(' '.join([o.text for o in output.outputs]))
         return {
             "prompts": prompt,
-            "generated_text": generated_text,
+            "generated_content": generated_text,
         }
+
+    def encode(self, batch):
+        outputs = self.llm.encode(batch)
+        prompt = []
+        generated_embedding = []
+        for output in outputs:
+            generated_embedding.append(' '.join([str(i) for i in output.outputs.embedding]))
+        return {
+            "generated_content": generated_embedding,
+        }
+        
 
 
 class Executor:
@@ -281,6 +298,7 @@ class Executor:
         logging.info(f"Model path: {model_dir}")
 
         self.llm_predictor = LLMPredictor(model_dir,
+                                          FLAGS.embedding_mode,
                                           FLAGS.enable_prefix_caching,
                                           FLAGS.gpu_memory_utilization,
                                           FLAGS.max_model_len,
@@ -308,7 +326,7 @@ class Executor:
                 batch = handle.batch()
                 if batch['prompts']==[]: break
                 outputs = self.kernel.compute(InferContext(self.llm_predictor, batch['prompts']))
-                handle.write(batch, outputs['generated_text'])
+                handle.write(batch, outputs['generated_content'])
                 if counter % 1 == 0:
                     logging.info(f"Process batch: {counter}, id: {batch['id']}, size: {len(batch['prompts'])}")
                 counter += 1

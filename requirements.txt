@@ -1,8 +1,7 @@
 modelscope
-numpy
-tzdata
+#numpy
+#tzdata
 absl-py >= 2.1.0
-torch == 2.3.0
-vllm >=0.4.2
-# packaging
-# flash-attn>=2.5.8
+#torch == 2.3.0
+#vllm >=0.4.2
+batchllm
