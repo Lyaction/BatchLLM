@@ -250,7 +250,8 @@ class LLMPredictor:
                        gpu_memory_utilization=gpu_memory_utilization,
                        max_model_len=max_model_len,
                        enforce_eager=True if embedding_mode else False,
-                       tensor_parallel_size=tensor_parallel_size)
+                       tensor_parallel_size=tensor_parallel_size,
+                       trust_remote_code=True)
 
         self.sampling_params = SamplingParams(max_tokens=max_tokens,
                                               top_p=top_p,
