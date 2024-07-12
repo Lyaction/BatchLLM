@@ -25,6 +25,7 @@ FLAGS = flags.FLAGS
 flags.DEFINE_string('infer_kernel', 'SingleInfer', 'user define class for infer.')
 flags.DEFINE_integer('batch_size', 1024, 'batch size.')
 flags.DEFINE_integer('max_queue_len', 102400, 'max queue len.')
+flags.DEFINE_string('model_root', '/modelset/model/base', 'fine tune.')
 
 # odps config
 flags.DEFINE_string('access_id', '', 'odps access id.')
@@ -157,7 +158,7 @@ class OdpsHandle:
             count = data_size
         start = self.index*data_size
 
-        assert mark >= 0 and mark < count
+        assert mark >= 0 and mark < count, f"mark:{mark}, count:{count}"
         self.reader = download_session.open_record_reader(start + mark, count - mark, columns=self.columns)
         logging.info(f"Odps reader init: {locals()}")
         return (start+mark, count-mark)
@@ -282,7 +283,7 @@ class LLMPredictor:
         return {
             "generated_content": generated_embedding,
         }
-        
+
 
 
 class Executor:
@@ -291,9 +292,12 @@ class Executor:
 
         check_config()
 
-        model_dir = os.path.join('/modelset/model/', FLAGS.model_name.split('/')[-1].replace('.', '___'))
-        if not os.path.exists(model_dir):
-            model_dir = snapshot_download(FLAGS.model_name, cache_dir='/work')
+        model_dir = os.path.join(FLAGS.model_root, FLAGS.model_name)
+        if FLAGS.model_name.startswith('qwen'):
+            model_dir = os.path.join(FLAGS.model_root, FLAGS.model_name.split('/')[-1].replace('.', '___'))
+
+        #if not os.path.exists(model_dir):
+        #    model_dir = snapshot_download(FLAGS.model_name, cache_dir='/work')
 
         logging.info(f"Model path: {model_dir}")
 
